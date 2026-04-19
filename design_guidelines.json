@@ -1,0 +1,133 @@
+{
+  "theme": "dark",
+  "archetype": "7 (Electric & Neon) combined with 2 (Performance Pro)",
+  "domain_context": "hybrid_fullstack DJ Skill Tracker App (Fitness-style gamification for DJs)",
+  "emotional_tone": "High energy, tactical, competitive, immersive club vibe",
+  "colors": {
+    "background": {
+      "base": "#0A0A0A",
+      "surface": "#121212",
+      "surface_elevated": "#1A1A1A",
+      "glass": "rgba(10, 10, 10, 0.6)"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#A0A0A0",
+      "muted": "#555555"
+    },
+    "brand": {
+      "primary": "#00E5FF",
+      "primary_glow": "rgba(0, 229, 255, 0.5)",
+      "secondary": "#FF007F",
+      "tertiary": "#39FF14"
+    },
+    "ranks": {
+      "cuivre": "linear-gradient(135deg, #B87333 0%, #8A5A24 100%)",
+      "bronze": "linear-gradient(135deg, #CD7F32 0%, #8B5A2B 100%)",
+      "argent": "linear-gradient(135deg, #C0C0C0 0%, #808080 100%)",
+      "or": "linear-gradient(135deg, #FFD700 0%, #B8860B 100%)",
+      "platine": "linear-gradient(135deg, #E5E4E2 0%, #999999 100%)",
+      "diamant": "linear-gradient(135deg, #B9F2FF 0%, #00E5FF 100%)",
+      "champion": "linear-gradient(135deg, #FF007F 0%, #7F00FF 100%)",
+      "maitre": "linear-gradient(135deg, #FF0000 0%, #FF8C00 100%)"
+    },
+    "status": {
+      "success": "#39FF14",
+      "warning": "#FFEA00",
+      "error": "#FF0033"
+    }
+  },
+  "typography": {
+    "fonts": {
+      "headings": "'Unbounded', sans-serif",
+      "body": "'Manrope', sans-serif",
+      "mono": "'JetBrains Mono', monospace"
+    },
+    "scales": {
+      "h1": "text-4xl sm:text-5xl lg:text-6xl tracking-tighter font-black",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl tracking-tight font-bold",
+      "h3": "text-xl sm:text-2xl tracking-tight font-semibold",
+      "body": "text-base leading-relaxed",
+      "small": "text-sm uppercase tracking-[0.2em] font-bold"
+    }
+  },
+  "layout_and_spacing": {
+    "dashboard_grid": "grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6",
+    "bento_strategy": "MODE B: THE CONTROL ROOM GRID. Every pixel utilized, h-full on children for uniform stretching.",
+    "container_padding": "p-6 md:p-8",
+    "section_spacing": "py-12 md:py-24",
+    "image_constraints": "max-h-[80vh] object-cover"
+  },
+  "surface_strategies": {
+    "dashboard_cards": {
+      "style": "Retro-Futurism / Grid Borders",
+      "css_classes": "bg-[#121212] border border-white/10 rounded-xl overflow-hidden relative",
+      "hover_effects": "hover:border-[#00E5FF]/50 transition-colors duration-300"
+    },
+    "glass_elements": {
+      "style": "Crystal Glass",
+      "css_classes": "backdrop-blur-xl bg-black/60 border-b border-white/10 backdrop-saturate-150"
+    },
+    "premium_locked_state": {
+      "style": "Frosted Glass Overlay",
+      "css_classes": "backdrop-blur-md bg-black/80 flex items-center justify-center absolute inset-0 z-10"
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-[#00E5FF] text-black font-bold uppercase tracking-widest hover:bg-white transition-colors duration-300 shadow-[0_0_15px_rgba(0,229,255,0.4)]",
+      "secondary": "bg-transparent border border-[#FF007F] text-[#FF007F] hover:bg-[#FF007F] hover:text-white transition-all duration-300",
+      "outline": "border border-white/20 text-white hover:border-white/60 transition-colors"
+    },
+    "progress_bars": {
+      "style": "Neon glow, crisp edges",
+      "track": "bg-white/5 rounded-full h-3",
+      "fill": "bg-gradient-to-r from-[#00E5FF] to-[#FF007F] shadow-[0_0_10px_rgba(0,229,255,0.6)] rounded-full h-full"
+    },
+    "rank_badges": {
+      "style": "Metallic gradients with subtle inner shadows and glowing drop shadows, hexagonal or sharp shield geometry."
+    },
+    "charts": {
+      "library": "recharts or native SVG waveforms",
+      "style": "Dark background, transparent grid lines, vibrant neon lines for data (Acid Green / Electric Blue)"
+    }
+  },
+  "interactions": {
+    "hover_states": "Always explicitly define text color on hover. Lift cards slightly (-translate-y-1).",
+    "focus_states": "focus:outline-none focus:ring-2 focus:ring-[#00E5FF] focus:ring-offset-2 focus:ring-offset-[#0A0A0A]",
+    "animations": "Use Framer Motion / react-native-reanimated. Spring animations for level-ups and progress bar fills. Smooth fade-ins for dashboard widgets."
+  },
+  "imagery": {
+    "hero_background": {
+      "url": "https://images.pexels.com/photos/19181687/pexels-photo-19181687.jpeg",
+      "description": "DJ focused on mixing music illuminated by vibrant neon lights. Used for auth screen or main welcome banner.",
+      "overlay": "bg-gradient-to-b from-black/80 via-black/50 to-[#0A0A0A]"
+    },
+    "session_analysis_bg": {
+      "url": "https://images.unsplash.com/photo-1697301439935-fe7160f4e3bb",
+      "description": "Close up of dj's turntable. Used as a subtle background for the audio set analysis view.",
+      "overlay": "bg-black/90"
+    },
+    "challenge_cards": {
+      "url": "https://images.pexels.com/photos/34307990/pexels-photo-34307990.jpeg",
+      "description": "DJ mixer setup colorful lights. Used as thumbnail for specific challenges."
+    }
+  },
+  "icons": {
+    "library": "lucide-react / lucide-react-native",
+    "usage": "Use thick weights, apply glow filters for active states."
+  },
+  "testing": {
+    "data_testid_rules": "All interactive elements MUST include a data-testid attribute in kebab-case (e.g., data-testid='log-session-btn', data-testid='premium-toggle-btn')."
+  },
+  "instructions_to_main_agent": [
+    "Build the UI focusing on a dark, club-like aesthetic heavily utilizing Tailwind CSS for the styling.",
+    "Install the following fonts: Unbounded (wght 400..900) for headings and Manrope for body text.",
+    "Implement tabbed/bottom navigation system (Dashboard, Sessions, Challenges, Stats, Profile) suitable for cross-platform.",
+    "For the Premium toggle, build a mocked switch that blurs out 'Advanced Stats' cards and displays an 'Upgrade to Premium' lock icon.",
+    "Rank mapping (Cuivre V to I, up to Maître) should visually use the metallic gradients defined in the 'ranks' color object.",
+    "Implement session logging with distinct type selectors (Mix, Transitions, Freestyle).",
+    "Dashboard should prioritize displaying current rank, progress bar to the next division, and total practice time.",
+    "Follow the BENTO GRID strategy for the layout: tight gaps, utilized space, dark tactical aesthetic with neon pops."
+  ]
+}
