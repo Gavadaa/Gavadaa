@@ -6,15 +6,30 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "../../src/auth";
 import { api, errMsg } from "../../src/api";
 
+type Challenge = {
+  id: string;
+  category: "daily" | "weekly" | "permanent";
+  title: string;
+  description: string;
+  icon: string;
+  xp_reward: number;
+  difficulty: string;
+  completed: boolean;
+  meets_requirements: boolean;
+  progress: string;
+  resets_in?: string;
+};
+
 export default function Challenges() {
   const { setUser } = useAuth();
-  const [challenges, setChallenges] = useState<any[]>([]);
+  const [data, setData] = useState<{ daily: Challenge[]; weekly: Challenge[]; permanent: Challenge[] } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [tab, setTab] = useState<"daily" | "weekly" | "permanent">("daily");
 
   const load = useCallback(async () => {
     try {
       const { data } = await api.get("/challenges");
-      setChallenges(data);
+      setData(data);
     } catch {}
   }, []);
 
@@ -23,26 +38,26 @@ export default function Challenges() {
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
   const showMsg = (title: string, msg: string) => {
-    if (Platform.OS === "web") {
-      // eslint-disable-next-line no-alert
-      window.alert(`${title}\n\n${msg}`);
-    } else {
-      Alert.alert(title, msg);
-    }
+    if (Platform.OS === "web") window.alert(`${title}\n\n${msg}`);
+    else Alert.alert(title, msg);
   };
 
-  const complete = async (c: any) => {
+  const complete = async (c: Challenge) => {
     try {
-      const { data } = await api.post("/challenges/complete", { challenge_id: c.id });
-      setUser(data.user);
+      const { data: r } = await api.post("/challenges/complete", { challenge_id: c.id, category: c.category });
+      setUser(r.user);
       await load();
-      showMsg("🏆 Défi complété", `+${data.xp_earned} XP !`);
+      showMsg("🏆 Défi complété", `+${r.xp_earned} XP !`);
     } catch (e: any) {
       showMsg("Critères non remplis", errMsg(e));
     }
   };
 
   const diffColor = (d: string) => d === "hard" ? "#FF3B5B" : d === "medium" ? "#FFEA00" : "#39FF14";
+  const catIcon: Record<string, any> = { daily: "sunny", weekly: "calendar", permanent: "trophy" };
+  const catColor: Record<string, string> = { daily: "#39FF14", weekly: "#FFD700", permanent: "#00E5FF" };
+
+  const list = data ? data[tab] : [];
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -51,9 +66,39 @@ export default function Challenges() {
         refreshControl={<RefreshControl tintColor="#00E5FF" refreshing={refreshing} onRefresh={onRefresh} />}
       >
         <Text style={styles.h1}>DÉFIS</Text>
-        <Text style={styles.subtitle}>Chaque défi est vérifié automatiquement avant validation</Text>
+        <Text style={styles.subtitle}>Quotidiens, hebdo et permanents — difficulté qui monte avec ton niveau</Text>
 
-        {challenges.map((c) => (
+        <View style={styles.tabs}>
+          {(["daily", "weekly", "permanent"] as const).map((t) => (
+            <TouchableOpacity
+              key={t}
+              testID={`tab-${t}`}
+              onPress={() => setTab(t)}
+              style={[styles.tab, tab === t && styles.tabActive, tab === t && { borderColor: catColor[t] }]}
+              activeOpacity={0.85}
+            >
+              <Ionicons name={catIcon[t]} size={16} color={tab === t ? catColor[t] : "#555"} />
+              <Text style={[styles.tabTxt, tab === t && { color: catColor[t] }]}>
+                {t === "daily" ? "JOUR" : t === "weekly" ? "SEMAINE" : "LÉGENDES"}
+              </Text>
+              {data && (
+                <View style={[styles.badge, tab === t && { backgroundColor: catColor[t] }]}>
+                  <Text style={[styles.badgeTxt, tab === t && { color: "#000" }]}>
+                    {data[t].filter((c) => !c.completed && c.meets_requirements).length || data[t].length}
+                  </Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {data && list[0]?.resets_in && (
+          <Text style={styles.resetInfo}>
+            <Ionicons name="time-outline" size={12} color="#A0A0A0" /> Reset : {list[0].resets_in}
+          </Text>
+        )}
+
+        {list.map((c) => (
           <View
             key={c.id}
             style={[styles.card, c.completed && styles.cardDone, !c.completed && c.meets_requirements && styles.cardReady]}
@@ -61,7 +106,7 @@ export default function Challenges() {
           >
             <View style={styles.cardHead}>
               <View style={[styles.iconBox, { backgroundColor: diffColor(c.difficulty) }]}>
-                <Ionicons name="flame" size={20} color="#000" />
+                <Ionicons name={c.icon as any} size={20} color="#000" />
               </View>
               <View style={{ flex: 1 }}>
                 <View style={styles.row}>
@@ -117,6 +162,7 @@ export default function Challenges() {
             </View>
           </View>
         ))}
+        {data && list.length === 0 && <Text style={styles.empty}>Aucun défi dans cette catégorie.</Text>}
       </ScrollView>
     </SafeAreaView>
   );
@@ -127,6 +173,17 @@ const styles = StyleSheet.create({
   scroll: { padding: 16, paddingBottom: 32 },
   h1: { color: "#fff", fontSize: 28, fontWeight: "900" },
   subtitle: { color: "#A0A0A0", marginBottom: 16, marginTop: 4, fontSize: 13 },
+  tabs: { flexDirection: "row", gap: 6, marginBottom: 12 },
+  tab: {
+    flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4,
+    paddingVertical: 10, borderRadius: 10, backgroundColor: "#121212",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.08)",
+  },
+  tabActive: { backgroundColor: "#0A0A0A" },
+  tabTxt: { color: "#555", fontWeight: "900", fontSize: 11, letterSpacing: 1 },
+  badge: { backgroundColor: "#222", paddingHorizontal: 6, paddingVertical: 1, borderRadius: 999, minWidth: 16, alignItems: "center" },
+  badgeTxt: { color: "#A0A0A0", fontSize: 10, fontWeight: "900" },
+  resetInfo: { color: "#A0A0A0", fontSize: 11, marginBottom: 10 },
   card: {
     backgroundColor: "#121212", padding: 16, borderRadius: 14, marginBottom: 12,
     borderWidth: 1, borderColor: "rgba(255,255,255,0.06)",
@@ -153,4 +210,5 @@ const styles = StyleSheet.create({
   claimTxt: { color: "#000", fontWeight: "900", letterSpacing: 1.5, fontSize: 11 },
   doneBadge: { flexDirection: "row", alignItems: "center", gap: 5 },
   doneTxt: { color: "#39FF14", fontWeight: "900", fontSize: 11, letterSpacing: 1 },
+  empty: { color: "#555", textAlign: "center", padding: 20 },
 });

@@ -13,6 +13,8 @@ export default function RootLayout() {
           <Stack.Screen name="index" />
           <Stack.Screen name="auth" />
           <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="profile-edit" options={{ presentation: "modal" }} />
+          <Stack.Screen name="user/[id]" options={{ presentation: "modal" }} />
         </Stack>
       </AuthProvider>
     </SafeAreaProvider>

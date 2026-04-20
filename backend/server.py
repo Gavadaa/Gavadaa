@@ -125,6 +125,15 @@ class SessionIn(BaseModel):
 
 class ChallengeCompleteIn(BaseModel):
     challenge_id: str
+    category: Optional[str] = "permanent"  # permanent | daily | weekly
+
+class ProfileUpdateIn(BaseModel):
+    bio: Optional[str] = Field(default=None, max_length=300)
+    avatar_base64: Optional[str] = Field(default=None, max_length=600000)  # ~400kb image
+    music_styles: Optional[List[str]] = None
+    age: Optional[int] = Field(default=None, ge=10, le=120)
+    city: Optional[str] = Field(default=None, max_length=60)
+    socials: Optional[dict] = None  # {instagram, tiktok, facebook, twitter, youtube, spotify, soundcloud}
 
 class AudioAnalysisOut(BaseModel):
     filename: str
@@ -140,7 +149,34 @@ class AudioAnalysisOut(BaseModel):
 def serialize_user(user: dict) -> dict:
     u = {k: v for k, v in user.items() if k not in ("_id", "password_hash")}
     u["rank_info"] = calc_rank_info(u.get("total_xp", 0))
+    # Ensure optional profile fields exist
+    u.setdefault("bio", "")
+    u.setdefault("avatar_base64", "")
+    u.setdefault("music_styles", [])
+    u.setdefault("age", None)
+    u.setdefault("city", "")
+    u.setdefault("socials", {})
     return u
+
+def public_user(user: dict) -> dict:
+    """Public-facing subset of a user (for friend profiles)."""
+    return {
+        "id": user.get("id"),
+        "dj_name": user.get("dj_name"),
+        "bio": user.get("bio", ""),
+        "avatar_base64": user.get("avatar_base64", ""),
+        "music_styles": user.get("music_styles", []),
+        "age": user.get("age"),
+        "city": user.get("city", ""),
+        "socials": user.get("socials", {}),
+        "total_xp": user.get("total_xp", 0),
+        "total_minutes": user.get("total_minutes", 0),
+        "sessions_count": user.get("sessions_count", 0),
+        "streak_days": user.get("streak_days", 0),
+        "completed_challenges": len(user.get("completed_challenges", [])),
+        "rank_info": calc_rank_info(user.get("total_xp", 0)),
+        "created_at": user.get("created_at"),
+    }
 
 import secrets
 def _gen_friend_code() -> str:
@@ -201,6 +237,110 @@ DEFAULT_CHALLENGES = [
     },
 ]
 
+# Daily / weekly pools
+DAILY_POOL = [
+    {"template_id": "d_warmup", "title": "Chauffe-moteur", "icon": "flame",
+     "verification": "minutes_today", "base_minutes": 15, "base_xp": 40},
+    {"template_id": "d_mix_day", "title": "Mix du jour", "icon": "albums",
+     "verification": "session_today", "session_type": "mix", "base_duration": 20, "base_xp": 50},
+    {"template_id": "d_trans_day", "title": "Précision transitions", "icon": "git-merge",
+     "verification": "session_today", "session_type": "transitions", "base_duration": 15, "base_xp": 60},
+    {"template_id": "d_free_day", "title": "Freestyle rapide", "icon": "flash",
+     "verification": "session_today", "session_type": "freestyle", "base_duration": 15, "base_xp": 70},
+    {"template_id": "d_grind", "title": "Grosse session du jour", "icon": "barbell",
+     "verification": "minutes_today", "base_minutes": 45, "base_xp": 100},
+    {"template_id": "d_quick", "title": "Quick win", "icon": "rocket",
+     "verification": "session_today", "base_duration": 10, "base_xp": 30},
+]
+
+WEEKLY_POOL = [
+    {"template_id": "w_marathon", "title": "Marathon hebdo", "icon": "trophy",
+     "verification": "minutes_this_week", "base_minutes": 180, "base_xp": 400},
+    {"template_id": "w_varied", "title": "Touche-à-tout", "icon": "layers",
+     "verification": "all_types_this_week", "base_xp": 350},
+    {"template_id": "w_sessions", "title": "Régularité", "icon": "calendar",
+     "verification": "sessions_this_week", "base_sessions": 5, "base_xp": 300},
+    {"template_id": "w_big_one", "title": "La grosse session", "icon": "thunderstorm-outline",
+     "verification": "minutes_this_week", "base_minutes": 300, "base_xp": 600},
+]
+
+import hashlib as _hashlib
+def _seed_pick(key: str, pool: list, n: int) -> list:
+    h = _hashlib.sha256(key.encode()).digest()
+    indices = list(range(len(pool)))
+    picked = []
+    for i in range(min(n, len(pool))):
+        idx = h[i] % len(indices)
+        picked.append(pool[indices.pop(idx)])
+    return picked
+
+def _scale_difficulty(tpl: dict, level: int) -> dict:
+    mult = 1.0 + (level / 25.0)
+    out = dict(tpl)
+    out["xp_reward"] = int(tpl.get("base_xp", 50) * mult)
+    req = {}
+    if "base_minutes" in tpl:
+        req["min_minutes"] = int(tpl["base_minutes"] * (1 + level / 30.0))
+    if "base_duration" in tpl:
+        req["min_duration"] = int(tpl["base_duration"] * (1 + level / 30.0))
+    if "base_sessions" in tpl:
+        req["min_sessions"] = max(3, int(tpl["base_sessions"] + level // 15))
+    if "session_type" in tpl:
+        req["session_type"] = tpl["session_type"]
+    out["requirements"] = req
+    out["description"] = _describe_challenge(tpl["verification"], req)
+    out["difficulty"] = "easy" if level < 10 else "medium" if level < 25 else "hard"
+    return out
+
+def _describe_challenge(verif: str, req: dict) -> str:
+    if verif == "minutes_today":
+        return f"Pratique au moins {req.get('min_minutes','?')} minutes aujourd'hui."
+    if verif == "session_today":
+        if req.get("session_type"):
+            return f"Log une session {req['session_type']} de {req.get('min_duration',10)}+ min aujourd'hui."
+        return f"Log une session de {req.get('min_duration',10)}+ min aujourd'hui."
+    if verif == "minutes_this_week":
+        return f"Totalise {req.get('min_minutes','?')} min de pratique cette semaine."
+    if verif == "sessions_this_week":
+        return f"Log {req.get('min_sessions','?')} sessions cette semaine."
+    if verif == "all_types_this_week":
+        return "Pratique les 3 types (mix, transitions, freestyle) cette semaine."
+    return ""
+
+async def build_category_challenges(user: dict, category: str) -> list:
+    if category == "daily":
+        pool, key_suffix, period_key = DAILY_POOL, _today_key(), _today_key()
+        done_map = user.get("daily_completed", {})
+        n = 3
+        resets_in = "minuit UTC"
+    else:
+        pool, key_suffix, period_key = WEEKLY_POOL, _week_key(), _week_key()
+        done_map = user.get("weekly_completed", {})
+        n = 2
+        resets_in = "lundi"
+    seed = f"{user['id']}:{key_suffix}"
+    tpls = _seed_pick(seed, pool, n)
+    level = calc_rank_info(user.get("total_xp", 0))["level"]
+    done_set = set(done_map.get(period_key, []))
+    out = []
+    for tpl in tpls:
+        scaled = _scale_difficulty(tpl, level)
+        cid = tpl["template_id"]
+        completed = cid in done_set
+        if completed:
+            meets, progress = True, "Complété"
+        else:
+            meets, progress = await verify_challenge(user["id"], scaled)
+        out.append({
+            "id": cid, "category": category,
+            "title": tpl["title"], "description": scaled["description"],
+            "icon": tpl["icon"], "xp_reward": scaled["xp_reward"],
+            "difficulty": scaled["difficulty"], "completed": completed,
+            "meets_requirements": meets, "progress": progress,
+            "resets_in": resets_in,
+        })
+    return out
+
 async def verify_challenge(user_id: str, challenge: dict) -> tuple[bool, str]:
     v = challenge.get("verification")
     req = challenge.get("requirements", {})
@@ -228,7 +368,64 @@ async def verify_challenge(user_id: str, challenge: dict) -> tuple[bool, str]:
         if last["rough_transitions"] <= req.get("max_rough_transitions", 5) and last["score"] >= req.get("min_score", 60):
             return True, "OK"
         return False, f"Dernier mix : {last['rough_transitions']} transitions brusques, score {last['score']}/100"
+    # --- Daily / weekly ---
+    if v == "session_today":
+        today = datetime.now(timezone.utc).date().isoformat()
+        st = req.get("session_type"); md = req.get("min_duration", 1)
+        q = {"user_id": user_id, "date": today, "duration_minutes": {"$gte": md}}
+        if st: q["session_type"] = st
+        cnt = await db.sessions.count_documents(q)
+        if cnt > 0: return True, "OK"
+        label = f"{st} de {md}+ min" if st else f"session de {md}+ min"
+        return False, f"Aujourd'hui : log une {label}"
+    if v == "minutes_today":
+        today = datetime.now(timezone.utc).date().isoformat()
+        md = req.get("min_minutes", 30)
+        agg = await db.sessions.aggregate([
+            {"$match": {"user_id": user_id, "date": today}},
+            {"$group": {"_id": None, "total": {"$sum": "$duration_minutes"}}},
+        ]).to_list(1)
+        total = agg[0]["total"] if agg else 0
+        if total >= md: return True, "OK"
+        return False, f"Aujourd'hui : {total}/{md} min"
+    if v == "minutes_this_week":
+        ws = _week_start_iso()
+        md = req.get("min_minutes", 120)
+        agg = await db.sessions.aggregate([
+            {"$match": {"user_id": user_id, "date": {"$gte": ws}}},
+            {"$group": {"_id": None, "total": {"$sum": "$duration_minutes"}}},
+        ]).to_list(1)
+        total = agg[0]["total"] if agg else 0
+        if total >= md: return True, "OK"
+        return False, f"Cette semaine : {total}/{md} min"
+    if v == "sessions_this_week":
+        ws = _week_start_iso()
+        need = req.get("min_sessions", 5)
+        cnt = await db.sessions.count_documents({"user_id": user_id, "date": {"$gte": ws}})
+        if cnt >= need: return True, "OK"
+        return False, f"Cette semaine : {cnt}/{need} sessions"
+    if v == "all_types_this_week":
+        ws = _week_start_iso()
+        types = set(await db.sessions.distinct("session_type", {"user_id": user_id, "date": {"$gte": ws}}))
+        needed = {"mix", "transitions", "freestyle"}
+        if needed.issubset(types): return True, "OK"
+        missing = needed - types
+        return False, f"Pratique aussi : {', '.join(sorted(missing))}"
     return True, "OK"
+
+def _week_start_iso() -> str:
+    now = datetime.now(timezone.utc).date()
+    monday = now - timedelta(days=now.weekday())
+    return monday.isoformat()
+
+def _today_key() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+def _week_key() -> str:
+    now = datetime.now(timezone.utc).date()
+    monday = now - timedelta(days=now.weekday())
+    y, w, _ = monday.isocalendar()
+    return f"{y}-W{w:02d}"
 
 # ---------------- Routes ----------------
 @api_router.get("/")
@@ -258,6 +455,14 @@ async def register(body: RegisterIn):
         "role": "user",
         "friend_code": _gen_friend_code(),
         "friends": [],
+        "bio": "",
+        "avatar_base64": "",
+        "music_styles": [],
+        "age": None,
+        "city": "",
+        "socials": {},
+        "daily_completed": {},
+        "weekly_completed": {},
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.users.insert_one(user_doc)
@@ -388,34 +593,67 @@ async def get_stats(current=Depends(get_current_user)):
 @api_router.get("/challenges")
 async def list_challenges(current=Depends(get_current_user)):
     completed = set(current.get("completed_challenges", []))
-    out = []
+    permanent = []
     for c in DEFAULT_CHALLENGES:
         done = c["id"] in completed
         if done:
-            progress_txt = "Complété"
-            meets = True
+            meets, progress_txt = True, "Complété"
         else:
             meets, progress_txt = await verify_challenge(current["id"], c)
-        out.append({**c, "completed": done, "meets_requirements": meets, "progress": progress_txt})
-    return out
+        permanent.append({**c, "category": "permanent", "completed": done,
+                          "meets_requirements": meets, "progress": progress_txt})
+    daily = await build_category_challenges(current, "daily")
+    weekly = await build_category_challenges(current, "weekly")
+    return {"daily": daily, "weekly": weekly, "permanent": permanent}
 
 @api_router.post("/challenges/complete")
 async def complete_challenge(body: ChallengeCompleteIn, current=Depends(get_current_user)):
-    challenge = next((c for c in DEFAULT_CHALLENGES if c["id"] == body.challenge_id), None)
-    if not challenge:
-        raise HTTPException(status_code=404, detail="Défi introuvable")
-    if body.challenge_id in current.get("completed_challenges", []):
-        raise HTTPException(status_code=400, detail="Défi déjà complété")
-    ok, msg = await verify_challenge(current["id"], challenge)
-    if not ok:
-        raise HTTPException(status_code=400, detail=f"Critères non remplis : {msg}")
-    await db.users.update_one(
-        {"id": current["id"]},
-        {"$push": {"completed_challenges": body.challenge_id},
-         "$inc": {"total_xp": challenge["xp_reward"]}},
-    )
+    cat = body.category or "permanent"
+    if cat == "permanent":
+        challenge = next((c for c in DEFAULT_CHALLENGES if c["id"] == body.challenge_id), None)
+        if not challenge:
+            raise HTTPException(status_code=404, detail="Défi introuvable")
+        if body.challenge_id in current.get("completed_challenges", []):
+            raise HTTPException(status_code=400, detail="Défi déjà complété")
+        ok, msg = await verify_challenge(current["id"], challenge)
+        if not ok:
+            raise HTTPException(status_code=400, detail=f"Critères non remplis : {msg}")
+        await db.users.update_one(
+            {"id": current["id"]},
+            {"$push": {"completed_challenges": body.challenge_id},
+             "$inc": {"total_xp": challenge["xp_reward"]}},
+        )
+        xp = challenge["xp_reward"]
+    elif cat in ("daily", "weekly"):
+        pool = DAILY_POOL if cat == "daily" else WEEKLY_POOL
+        tpl = next((t for t in pool if t["template_id"] == body.challenge_id), None)
+        if not tpl:
+            raise HTTPException(status_code=404, detail="Défi introuvable")
+        # Must be in today's/week's selection for this user
+        seed = f"{current['id']}:{_today_key() if cat == 'daily' else _week_key()}"
+        selection = _seed_pick(seed, pool, 3 if cat == "daily" else 2)
+        if not any(s["template_id"] == body.challenge_id for s in selection):
+            raise HTTPException(status_code=400, detail="Ce défi n'est pas actif pour toi")
+        level = calc_rank_info(current.get("total_xp", 0))["level"]
+        scaled = _scale_difficulty(tpl, level)
+        period_key = _today_key() if cat == "daily" else _week_key()
+        completed_field = "daily_completed" if cat == "daily" else "weekly_completed"
+        done_map = current.get(completed_field, {})
+        if body.challenge_id in done_map.get(period_key, []):
+            raise HTTPException(status_code=400, detail="Défi déjà complété")
+        ok, msg = await verify_challenge(current["id"], scaled)
+        if not ok:
+            raise HTTPException(status_code=400, detail=f"Critères non remplis : {msg}")
+        await db.users.update_one(
+            {"id": current["id"]},
+            {"$addToSet": {f"{completed_field}.{period_key}": body.challenge_id},
+             "$inc": {"total_xp": scaled["xp_reward"]}},
+        )
+        xp = scaled["xp_reward"]
+    else:
+        raise HTTPException(status_code=400, detail="Catégorie invalide")
     updated = await db.users.find_one({"id": current["id"]}, {"_id": 0, "password_hash": 0})
-    return {"ok": True, "user": serialize_user(updated), "xp_earned": challenge["xp_reward"]}
+    return {"ok": True, "user": serialize_user(updated), "xp_earned": xp}
 
 # ---- Leaderboard ----
 @api_router.get("/leaderboard")
@@ -565,6 +803,28 @@ async def remove_friend(friend_id: str, current=Depends(get_current_user)):
     await db.users.update_one({"id": current["id"]}, {"$pull": {"friends": friend_id}})
     await db.users.update_one({"id": friend_id}, {"$pull": {"friends": current["id"]}})
     return {"ok": True}
+
+# ---- Profile ----
+@api_router.put("/profile")
+async def update_profile(body: ProfileUpdateIn, current=Depends(get_current_user)):
+    updates = {k: v for k, v in body.dict(exclude_none=True).items()}
+    if "socials" in updates and isinstance(updates["socials"], dict):
+        # Whitelist allowed keys and strip
+        allowed = {"instagram", "tiktok", "facebook", "twitter", "youtube", "spotify", "soundcloud"}
+        updates["socials"] = {k: str(v).strip()[:80] for k, v in updates["socials"].items() if k in allowed and v}
+    if "music_styles" in updates and isinstance(updates["music_styles"], list):
+        updates["music_styles"] = [str(s).strip()[:40] for s in updates["music_styles"][:10] if s]
+    if updates:
+        await db.users.update_one({"id": current["id"]}, {"$set": updates})
+    updated = await db.users.find_one({"id": current["id"]}, {"_id": 0, "password_hash": 0})
+    return serialize_user(updated)
+
+@api_router.get("/users/{user_id}")
+async def public_profile(user_id: str, current=Depends(get_current_user)):
+    u = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0, "email": 0})
+    if not u:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+    return public_user(u)
 
 # ---- Rank table (for UI) ----
 @api_router.get("/ranks")

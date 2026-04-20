@@ -16,6 +16,12 @@ export type User = {
   role: string;
   friend_code?: string;
   friends?: string[];
+  bio?: string;
+  avatar_base64?: string;
+  music_styles?: string[];
+  age?: number | null;
+  city?: string;
+  socials?: Record<string, string>;
   rank_info: RankInfo;
 };
 
