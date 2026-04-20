@@ -18,6 +18,12 @@ import * as Clipboard from "expo-clipboard";
 import { useAuth } from "../../src/auth";
 import { api, errMsg } from "../../src/api";
 import { RankBadge } from "../../src/RankBadge";
+import {
+  requestNotifPermission,
+  isNotifEnabled,
+  scheduleDailyReminder,
+  cancelDailyReminder,
+} from "../../src/notifications";
 
 export default function Profile() {
   const { user, logout, refreshUser } = useAuth();
@@ -30,6 +36,28 @@ export default function Profile() {
   const [adding, setAdding] = useState(false);
   const [view, setView] = useState<"friends" | "global">("friends");
   const [copied, setCopied] = useState(false);
+  const [notifsOn, setNotifsOn] = useState(false);
+
+  useEffect(() => {
+    isNotifEnabled().then(setNotifsOn);
+  }, []);
+
+  const toggleNotifs = async () => {
+    if (notifsOn) {
+      await cancelDailyReminder();
+      setNotifsOn(false);
+      showMsg("Notifications", "Rappels quotidiens désactivés");
+    } else {
+      const granted = await requestNotifPermission();
+      if (granted) {
+        await scheduleDailyReminder(19, 0);
+        setNotifsOn(true);
+        showMsg("Notifications activées", "Tu recevras un rappel chaque jour à 19h00 pour tes défis quotidiens 🔔");
+      } else {
+        showMsg("Permission refusée", Platform.OS === "web" ? "Les notifications ne sont pas disponibles sur web dans cette preview." : "Active les notifications dans les paramètres de ton téléphone.");
+      }
+    }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -260,6 +288,30 @@ export default function Profile() {
             })
           )}
         </View>
+
+        <TouchableOpacity
+          testID="notif-toggle"
+          onPress={toggleNotifs}
+          style={[styles.card, { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }]}
+          activeOpacity={0.85}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12, flex: 1 }}>
+            <Ionicons name={notifsOn ? "notifications" : "notifications-off-outline"} size={22} color={notifsOn ? "#00E5FF" : "#555"} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: "#fff", fontWeight: "900", fontSize: 13, letterSpacing: 1 }}>
+                NOTIFICATIONS
+              </Text>
+              <Text style={{ color: "#A0A0A0", fontSize: 11, marginTop: 2 }}>
+                {notifsOn ? "Rappel quotidien à 19h00" : "Active les rappels pour tes défis"}
+              </Text>
+            </View>
+          </View>
+          <View style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: notifsOn ? "#00E5FF" : "rgba(255,255,255,0.06)" }}>
+            <Text style={{ color: notifsOn ? "#000" : "#A0A0A0", fontWeight: "900", fontSize: 10, letterSpacing: 1 }}>
+              {notifsOn ? "ON" : "OFF"}
+            </Text>
+          </View>
+        </TouchableOpacity>
 
         <TouchableOpacity
           testID="logout-btn"

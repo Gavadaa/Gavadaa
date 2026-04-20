@@ -1,10 +1,15 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider } from "../src/auth";
+import { initNotifications } from "../src/notifications";
 
 export default function RootLayout() {
+  useEffect(() => {
+    initNotifications();
+  }, []);
+
   return (
     <SafeAreaProvider>
       <AuthProvider>

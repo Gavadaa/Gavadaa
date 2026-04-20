@@ -13,7 +13,7 @@ import tempfile
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadFile, File
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadFile, File, Form as FastApiForm
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -551,6 +551,168 @@ async def delete_session(session_id: str, current=Depends(get_current_user)):
     )
     updated = await db.users.find_one({"id": current["id"]}, {"_id": 0, "password_hash": 0})
     return {"ok": True, "user": serialize_user(updated)}
+
+class SessionPatchIn(BaseModel):
+    duration_minutes: Optional[int] = Field(default=None, ge=1, le=600)
+    session_type: Optional[str] = None
+    notes: Optional[str] = None
+
+@api_router.patch("/sessions/{session_id}")
+async def patch_session(session_id: str, body: SessionPatchIn, current=Depends(get_current_user)):
+    session = await db.sessions.find_one({"id": session_id, "user_id": current["id"]}, {"_id": 0})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session non trouvée")
+    updates = {}
+    new_type = body.session_type or session["session_type"]
+    new_duration = body.duration_minutes if body.duration_minutes is not None else session["duration_minutes"]
+    if body.session_type is not None:
+        if body.session_type not in ("mix", "transitions", "freestyle"):
+            raise HTTPException(status_code=400, detail="Type de session invalide")
+        updates["session_type"] = body.session_type
+    if body.duration_minutes is not None:
+        updates["duration_minutes"] = body.duration_minutes
+    if body.notes is not None:
+        updates["notes"] = body.notes
+    # Recompute XP if type or duration changed (preserve audio quality bonus if any)
+    if "session_type" in updates or "duration_minutes" in updates:
+        old_xp = int(session["xp_earned"])
+        base_old = xp_for_session(session["duration_minutes"], session["session_type"])
+        quality_bonus = old_xp - base_old  # preserve any bonus from audio analysis
+        new_base = xp_for_session(new_duration, new_type)
+        new_xp = new_base + max(0, quality_bonus)
+        updates["xp_earned"] = new_xp
+        # Update user totals
+        xp_diff = new_xp - old_xp
+        min_diff = new_duration - session["duration_minutes"]
+        await db.users.update_one(
+            {"id": current["id"]},
+            {"$inc": {"total_xp": xp_diff, "total_minutes": min_diff}},
+        )
+    if updates:
+        await db.sessions.update_one({"id": session_id, "user_id": current["id"]}, {"$set": updates})
+    updated_session = await db.sessions.find_one({"id": session_id, "user_id": current["id"]}, {"_id": 0})
+    updated_user = await db.users.find_one({"id": current["id"]}, {"_id": 0, "password_hash": 0})
+    return {"session": updated_session, "user": serialize_user(updated_user)}
+
+@api_router.post("/sessions/upload")
+async def upload_session(
+    session_type: str = FastApiForm(...),
+    notes: str = FastApiForm(""),
+    file: UploadFile = File(...),
+    current=Depends(get_current_user),
+):
+    if session_type not in ("mix", "transitions", "freestyle"):
+        raise HTTPException(status_code=400, detail="Type de session invalide")
+    import librosa
+    import numpy as np
+    contents = await file.read()
+    if len(contents) == 0:
+        raise HTTPException(status_code=400, detail="Fichier audio vide")
+    suffix = os.path.splitext(file.filename or "audio.mp3")[1] or ".mp3"
+    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+    try:
+        tmp.write(contents)
+        tmp.close()
+        y, sr = librosa.load(tmp.name, sr=22050, mono=True)
+        duration_sec = float(librosa.get_duration(y=y, sr=sr))
+        duration_minutes = max(1, int(round(duration_sec / 60)))
+        # Quality analysis
+        tempo_arr, _ = librosa.beat.beat_track(y=y, sr=sr)
+        tempo_val = tempo_arr.item() if hasattr(tempo_arr, "item") else float(tempo_arr)
+        onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+        tempogram = librosa.feature.tempogram(onset_envelope=onset_env, sr=sr)
+        stability = float(1.0 / (1.0 + np.std(np.mean(tempogram, axis=1))))
+        stability = max(0.0, min(1.0, stability))
+        rms = librosa.feature.rms(y=y)[0]
+        diffs = np.abs(np.diff(rms))
+        threshold = float(np.mean(diffs) + 2 * np.std(diffs))
+        rough = int(np.sum(diffs > threshold))
+        quality_score = int(min(100, max(0, stability * 70 + (30 if rough < 5 else max(0, 30 - rough)))))
+        # XP: base + quality bonus
+        base_xp = xp_for_session(duration_minutes, session_type)
+        quality_bonus = int(base_xp * (quality_score / 200.0))  # up to +50% bonus
+        total_xp = base_xp + quality_bonus
+        feedback = []
+        if rough > 10:
+            feedback.append(f"{rough} transitions brusques détectées — travaille les fondus.")
+        elif rough > 5:
+            feedback.append(f"{rough} transitions un peu brusques — presque parfait.")
+        if stability < 0.4:
+            feedback.append("BPM instable — entraîne-toi au beatmatch manuel.")
+        elif stability > 0.7:
+            feedback.append("Excellente stabilité BPM !")
+        if quality_score >= 80:
+            feedback.append(f"Mix validé à {quality_score}/100 ! +{quality_bonus} XP bonus qualité 🎛️")
+        elif quality_score >= 60:
+            feedback.append(f"Mix correct ({quality_score}/100) — +{quality_bonus} XP bonus")
+        else:
+            feedback.append(f"Mix à améliorer ({quality_score}/100) — continue à pratiquer")
+
+        # Create session
+        session_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+        session_doc = {
+            "id": session_id,
+            "user_id": current["id"],
+            "duration_minutes": duration_minutes,
+            "session_type": session_type,
+            "notes": notes or "",
+            "xp_earned": total_xp,
+            "audio_analyzed": True,
+            "audio_quality_score": quality_score,
+            "audio_bpm": round(tempo_val, 1),
+            "audio_stability": round(stability, 2),
+            "audio_rough_transitions": rough,
+            "audio_feedback": feedback,
+            "audio_filename": file.filename or "audio",
+            "created_at": now.isoformat(),
+            "date": now.date().isoformat(),
+        }
+        await db.sessions.insert_one(session_doc)
+        # Save separate audio analysis record for challenges
+        await db.audio_analyses.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": current["id"],
+            "created_at": now.isoformat(),
+            "filename": file.filename or "audio",
+            "bpm": round(tempo_val, 1),
+            "bpm_stability": round(stability, 2),
+            "duration_sec": round(duration_sec, 1),
+            "transitions_detected": int(max(1, len(onset_env) // 50)) if len(onset_env) else 0,
+            "rough_transitions": rough,
+            "score": quality_score,
+            "feedback": feedback,
+        })
+        # Update streak (same logic as manual create)
+        today = now.date().isoformat()
+        user = await db.users.find_one({"id": current["id"]})
+        last = user.get("last_session_date")
+        streak = user.get("streak_days", 0)
+        if last == today:
+            pass
+        elif last is None:
+            streak = 1
+        else:
+            last_date = datetime.fromisoformat(last).date() if "T" not in last else datetime.fromisoformat(last).date()
+            delta = (now.date() - last_date).days
+            streak = streak + 1 if delta == 1 else (1 if delta > 1 else streak)
+        await db.users.update_one(
+            {"id": current["id"]},
+            {"$inc": {"total_xp": total_xp, "total_minutes": duration_minutes, "sessions_count": 1},
+             "$set": {"last_session_date": today, "streak_days": streak}},
+        )
+        session_doc.pop("_id", None)
+        updated = await db.users.find_one({"id": current["id"]}, {"_id": 0, "password_hash": 0})
+        return {"session": session_doc, "user": serialize_user(updated),
+                "xp_breakdown": {"base": base_xp, "quality_bonus": quality_bonus, "total": total_xp}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.exception("session upload failed")
+        raise HTTPException(status_code=500, detail=f"Analyse échouée: {str(e)[:120]}")
+    finally:
+        try: os.unlink(tmp.name)
+        except Exception: pass
 
 # ---- Stats ----
 @api_router.get("/stats")
